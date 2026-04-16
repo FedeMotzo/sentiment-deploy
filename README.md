@@ -231,3 +231,125 @@ Usato da:
 - Jenkins per verificare che il deploy sia andato a buon fine
 
 ---
+
+# Step 3 — Docker e Monitoraggio
+
+## Obiettivo
+
+Containerizzare l'API e orchestrare l'intero stack (API + Prometheus + Grafana) tramite Docker Compose, garantendo riproducibilità dell'ambiente e monitoraggio in tempo reale.
+
+---
+
+## Struttura
+
+```
+├── Dockerfile
+├── docker-compose.yml
+└── monitoring/
+    ├── prometheus.yml
+    └── grafana/
+        └── provisioning/
+            ├── datasources/
+            │   └── prometheus.yml      ← configura Prometheus come datasource
+            └── dashboards/
+                ├── dashboard.yml       ← dice a Grafana dove trovare le dashboard
+                └── sentiment_dashboard.json  ← dashboard pre-configurata
+```
+
+---
+
+## Dockerfile
+
+Il Dockerfile usa un **multi-stage build** per mantenere l'immagine finale il più leggera possibile.
+
+```
+Stage 1 (builder) → installa le dipendenze Python
+Stage 2 (runtime) → copia solo il risultato, senza tool di build
+```
+---
+
+## Docker Compose
+
+Orchestra tre servizi su una rete interna isolata (`sentiment-net`):
+
+### Servizi
+
+| Servizio | Immagine | Porta | Ruolo |
+|----------|----------|-------|-------|
+| `api` | build locale | 8000 | Serve il modello |
+| `prometheus` | prom/prometheus:v2.52.0 | 9090 | Raccoglie metriche |
+| `grafana` | grafana/grafana:10.4.2 | 3000 | Visualizza dashboard |
+
+### Dipendenze tra servizi
+
+```
+grafana → prometheus → api (healthy)
+```
+
+Prometheus aspetta che l'API sia **healthy** prima di avviarsi (`condition: service_healthy`). Grafana aspetta che Prometheus sia up. Questo evita errori di avvio dovuti a race condition.
+
+### Volumi persistenti
+
+- `prometheus-data` — conserva i dati storici delle metriche
+- `grafana-data` — conserva configurazioni e preferenze Grafana
+
+I dati sopravvivono al riavvio dei container.
+
+---
+
+## Prometheus
+
+Scrapa l'endpoint `/metrics` dell'API ogni 15 secondi e archivia i dati nel suo database time-series.
+
+```yaml
+scrape_configs:
+  - job_name: "sentiment-api"
+    static_configs:
+      - targets: ["api:8000"]  # nome servizio Docker, non localhost
+```
+
+---
+
+## Grafana
+
+### Provisioning automatico
+
+Grafana viene configurata interamente tramite file, senza intervento manuale sulla UI. Al primo avvio carica automaticamente:
+
+- **Datasource** (`provisioning/datasources/prometheus.yml`) — connessione a Prometheus
+- **Dashboard** (`provisioning/dashboards/sentiment_dashboard.json`) — dashboard pre-configurata
+
+### Dashboard — pannelli
+
+| Pannello | Query Prometheus | Descrizione |
+|----------|-----------------|-------------|
+| Predizioni per sentiment | `rate(sentiment_predictions_total[1m])` | Frequenza predizioni al minuto per classe |
+| Latenza p50/p95/p99 | `histogram_quantile(...)` | Distribuzione tempi di risposta |
+| Errori | `rate(sentiment_prediction_errors_total[1m])` | Frequenza errori al minuto |
+| CPU % | `sentiment_cpu_usage_percent` | Utilizzo CPU istantaneo |
+
+---
+
+## Avvio
+
+```bash
+# Prima build e avvio
+docker compose up --build
+
+# Avvii successivi
+docker compose up
+
+# Stop (conserva i volumi)
+docker compose down
+
+# Stop e reset completo (elimina anche i dati storici)
+docker compose down -v
+```
+
+### URL di accesso
+
+| Servizio | URL | Credenziali |
+|----------|-----|-------------|
+| API docs | http://localhost:8000/docs | — |
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | admin / admin |

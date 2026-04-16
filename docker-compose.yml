@@ -1,0 +1,73 @@
+services:
+
+  # ─── API ───────────────────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: sentiment-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montiamo il modello come volume
+      - ./app/model.pkl:/app/app/model.pkl:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - sentiment-net
+
+  # ─── PROMETHEUS ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: sentiment-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d" 
+    depends_on:
+      api:
+        condition: service_healthy  # aspetta che l'API sia healthy
+    restart: unless-stopped
+    networks:
+      - sentiment-net
+
+  # ─── GRAFANA ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: sentiment-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - sentiment-net
+
+# ─── VOLUMI PERSISTENTI ────────────────────────────────────────────────────
+# I dati di Prometheus e Grafana sopravvivono al riavvio dei container
+volumes:
+  prometheus-data:
+  grafana-data:
+
+# ─── RETE INTERNA ──────────────────────────────────────────────────────────
+# I tre servizi comunicano su una rete Docker isolata
+networks:
+  sentiment-net:
+    driver: bridge

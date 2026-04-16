@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s      # ogni quanto Prometheus chiama /metrics
+  evaluation_interval: 15s  # ogni quanto valuta le regole di alerting
+
+scrape_configs:
+  - job_name: "sentiment-api"
+    static_configs:
+      - targets: ["api:8000"]   # "api" è il nome del servizio in docker-compose
