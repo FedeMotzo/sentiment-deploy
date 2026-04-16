@@ -57,7 +57,7 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh 'docker compose up -d api prometheus grafana'
+                sh 'docker compose up -d --build api prometheus grafana'
             }
         }
     }
