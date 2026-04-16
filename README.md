@@ -1,3 +1,65 @@
+# Sentiment Analysis — Deploy & Monitoring
+
+Sistema end-to-end per il deploy e il monitoraggio di un modello di Sentiment Analysis:
+training, API REST, pipeline CI/CD con Jenkins, monitoring con Prometheus e Grafana.
+
+---
+
+## Quickstart
+
+### Prerequisiti
+
+- Docker 24+ con plugin `compose`
+- Git
+
+### Avvio in 3 comandi
+
+```bash
+git clone https://github.com/FedeMotzo/sentiment-deploy.git
+cd sentiment-deploy
+docker compose up -d jenkins
+```
+
+### Setup Jenkins
+
+1. Recupera la password iniziale:
+   ```bash
+   docker exec sentiment-jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+   ```
+2. Apri <http://localhost:8080>, incolla la password
+3. Seleziona **"Install suggested plugins"** e attendi che finisca
+4. Crea un utente admin (es. `admin` / `admin`)
+5. **Nuovo Elemento** → nome `sentiment-pipeline` → tipo **Pipeline** → OK
+6. Nella sezione Pipeline:
+   - *Definition*: **Pipeline script from SCM**
+   - *SCM*: **Git**
+   - *Repository URL*: `https://github.com/FedeMotzo/sentiment-deploy.git`
+   - *Branch*: `*/main`
+   - *Script Path*: `Jenkinsfile`
+7. Salva → **Build Now**
+
+La pipeline si occuperà di tutto: training del modello, test, build dell'immagine,
+deploy di API + Prometheus + Grafana.
+
+### URL di accesso (dopo il primo build)
+
+| Servizio | URL | Credenziali |
+|----------|-----|-------------|
+| Jenkins | <http://localhost:8080> | admin / admin |
+| API (Swagger) | <http://localhost:8000/docs> | — |
+| Prometheus | <http://localhost:9090> | — |
+| Grafana | <http://localhost:3000> | admin / admin |
+
+### Smoke test dell'API
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"review":"This product is absolutely amazing!"}'
+```
+
+---
+
 # Step 1 — Training del modello di Sentiment Analysis
 
 ## Obiettivo
@@ -101,10 +163,14 @@ La confidence più bassa sul neutral (0.75 vs 0.96-0.99) riflette l'ambiguità i
 ## Output
 
 Il modello addestrato viene serializzato in `app/model.pkl` tramite `pickle`.
+**Il file non è versionato in git**: viene generato dalla pipeline Jenkins oppure localmente.
 
-Per rigenerare il modello:
+Per rigenerare il modello in locale:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 python train.py
 ```
 
@@ -243,11 +309,16 @@ Containerizzare l'API e orchestrare l'intero stack (API + Prometheus + Grafana) 
 ## Struttura
 
 ```
-├── Dockerfile
+├── Dockerfile                    ← API
 ├── docker-compose.yml
+├── jenkins/
+│   └── Dockerfile                ← Jenkins custom (Python + Docker CLI)
 └── monitoring/
-    ├── prometheus.yml
+    ├── prometheus/
+    │   ├── Dockerfile            ← Prometheus + config integrata
+    │   └── prometheus.yml
     └── grafana/
+        ├── Dockerfile            ← Grafana + provisioning integrato
         └── provisioning/
             ├── datasources/
             │   └── prometheus.yml      ← configura Prometheus come datasource
@@ -256,9 +327,13 @@ Containerizzare l'API e orchestrare l'intero stack (API + Prometheus + Grafana) 
                 └── sentiment_dashboard.json  ← dashboard pre-configurata
 ```
 
+Ogni servizio viene costruito con un Dockerfile dedicato che include la sua configurazione.
+Questo approccio rende l'immagine autoconsistente e
+permette a Jenkins (che gira in un container) di deployare senza problemi di path.
+
 ---
 
-## Dockerfile
+## Dockerfile dell'API
 
 Il Dockerfile usa un **multi-stage build** per mantenere l'immagine finale il più leggera possibile.
 
@@ -266,30 +341,28 @@ Il Dockerfile usa un **multi-stage build** per mantenere l'immagine finale il pi
 Stage 1 (builder) → installa le dipendenze Python
 Stage 2 (runtime) → copia solo il risultato, senza tool di build
 ```
+
+Include un **guard** che fa fallire il build se `app/model.pkl` non è presente nel
+build context, evitando deploy silenziosi di un'immagine senza modello.
+
 ---
 
 ## Docker Compose
 
-Orchestra tre servizi su una rete interna isolata (`sentiment-net`):
+Orchestra quattro servizi su una rete interna isolata (`sentiment-net`):
 
 ### Servizi
 
 | Servizio | Immagine | Porta | Ruolo |
 |----------|----------|-------|-------|
-| `api` | build locale | 8000 | Serve il modello |
-| `prometheus` | prom/prometheus:v2.52.0 | 9090 | Raccoglie metriche |
-| `grafana` | grafana/grafana:10.4.2 | 3000 | Visualizza dashboard |
-
-### Dipendenze tra servizi
-
-```
-grafana → prometheus → api (healthy)
-```
-
-Prometheus aspetta che l'API sia **healthy** prima di avviarsi (`condition: service_healthy`). Grafana aspetta che Prometheus sia up. Questo evita errori di avvio dovuti a race condition.
+| `jenkins` | build locale | 8080 | Server CI/CD |
+| `api` | `sentiment-api:latest` (built dalla pipeline) | 8000 | Serve il modello |
+| `prometheus` | build locale | 9090 | Raccoglie metriche |
+| `grafana` | build locale | 3000 | Visualizza dashboard |
 
 ### Volumi persistenti
 
+- `jenkins-data` — conserva configurazione Jenkins, job, credenziali
 - `prometheus-data` — conserva i dati storici delle metriche
 - `grafana-data` — conserva configurazioni e preferenze Grafana
 
@@ -330,26 +403,89 @@ Grafana viene configurata interamente tramite file, senza intervento manuale sul
 
 ---
 
-## Avvio
+# Step 4 — CI/CD con Jenkins
+
+## Obiettivo
+
+Automatizzare l'intero ciclo di training, test, build e deploy tramite una pipeline
+Jenkins. Ogni commit scatena (o può scatenare) una build che addestra il modello,
+esegue i test, costruisce l'immagine Docker e avvia lo stack completo.
+
+---
+
+## Architettura
+
+Jenkins gira in un container Docker definito in `jenkins/Dockerfile`. Contiene:
+- **Python 3.13** per eseguire training e test
+- **Docker CLI** + **compose plugin** per costruire immagini e orchestrare container
+- Accesso al Docker daemon dell'host tramite **socket montato** (`/var/run/docker.sock`)
+
+---
+
+## Stage della pipeline
+
+La pipeline è definita in `Jenkinsfile` nella root del repo.
+
+| # | Stage | Cosa fa |
+|---|-------|---------|
+| 1 | **Setup** | Crea un virtualenv Python e installa le dipendenze di `requirements.txt` |
+| 2 | **Train Model** | Esegue `train.py` se `app/model.pkl` non esiste già |
+| 3 | **Unit Test** | `pytest tests/test_unit.py` |
+| 4 | **Integration Test** | `pytest tests/test_integration.py` |
+| 5 | **Build Docker Image** | Costruisce `sentiment-api:${BUILD_NUMBER}` e tagga come `latest` |
+| 6 | **Deploy** | `docker compose up -d --build api prometheus grafana` |
+
+Ogni stage dipende dal successo del precedente: se i test falliscono, l'immagine
+non viene costruita né deployata.
+
+---
+
+## Perché il training è dentro la pipeline
+
+Il modello `app/model.pkl` non è committato nel repo: viene **prodotto dalla pipeline**.
+Questo design ha due vantaggi:
+
+- **Repo leggero**: niente binari da 30 MB che pesano sulla history di git
+- **Riproducibilità**: chiunque cloni il repo ottiene un modello fresco dallo stesso dataset, con la stessa configurazione
+
+Il training completo richiede circa 30 secondi su una macchina moderna.
+
+---
+
+## Configuration delle immagini — perché niente bind mount
+
+Prometheus e Grafana **includono la loro configurazione direttamente nell'immagine**
+tramite `COPY` in `monitoring/prometheus/Dockerfile` e `monitoring/grafana/Dockerfile`.
+
+Questa scelta risolve un problema noto del pattern DooD (Docker-out-of-Docker):
+
+> Quando Jenkins (dentro un container) esegue `docker compose up`, i path relativi
+> dei bind mount come `./monitoring/prometheus.yml` vengono risolti **rispetto
+> all'host**, non rispetto al workspace di Jenkins. Se il repo è clonato nel
+> workspace Jenkins, l'host non lo vede e i mount falliscono.
+
+Copiando i file di configurazione dentro l'immagine al build time, il problema
+scompare: i file vengono passati via **build context**, non
+via filesystem dell'host. Così la pipeline è portabile su qualsiasi macchina che
+abbia Docker.
+
+---
+
+## Comandi utili
 
 ```bash
-# Prima build e avvio
-docker compose up --build
+# Log della pipeline in real-time
+docker logs -f sentiment-jenkins
 
-# Avvii successivi
-docker compose up
+# Stato di tutti i container
+docker ps --format "table {{.Names}}\t{{.Status}}"
 
-# Stop (conserva i volumi)
+# Log dell'API (utile per debug dopo deploy)
+docker logs sentiment-api --tail 50
+
+# Stop completo (conserva i volumi)
 docker compose down
 
-# Stop e reset completo (elimina anche i dati storici)
+# Reset totale (elimina anche dati storici e configurazione Jenkins)
 docker compose down -v
 ```
-
-### URL di accesso
-
-| Servizio | URL | Credenziali |
-|----------|-----|-------------|
-| API docs | http://localhost:8000/docs | — |
-| Prometheus | http://localhost:9090 | — |
-| Grafana | http://localhost:3000 | admin / admin |
