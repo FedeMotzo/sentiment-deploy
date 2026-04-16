@@ -25,5 +25,23 @@ pipeline {
                 '''
             }
         }
+
+        stage('Unit Test') {
+            steps {
+                sh '''
+                    . .venv/bin/activate
+                    python -m pytest tests/test_unit.py -v
+                '''
+            }
+        }
+
+        stage('Integration Test') {
+            steps {
+                sh '''
+                    . .venv/bin/activate
+                    python -m pytest tests/test_integration.py -v
+                '''
+            }
+        }
     }
 }
