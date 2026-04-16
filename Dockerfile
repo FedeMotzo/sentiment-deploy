@@ -1,5 +1,5 @@
 # ─── Stage 1: builder ────────────────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim AS builder
 
 WORKDIR /build
 
@@ -9,7 +9,7 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
@@ -27,7 +27,7 @@ COPY --chown=app:app app/ ./app/
 # Guard: fail-fast se il modello non è stato copiato nell'immagine
 RUN test -f ./app/model.pkl || { \
         echo "ERROR: app/model.pkl non trovato nel build context."; \
-        echo "Esegui 'python scripts/train.py' prima di 'docker build'."; \
+        echo "Esegui 'python train.py' prima di 'docker build'."; \
         exit 1; \
     }
 

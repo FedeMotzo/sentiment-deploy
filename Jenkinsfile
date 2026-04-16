@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME = "sentiment-api"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
+    }
+
     stages {
         stage('Setup') {
             steps {
@@ -41,6 +46,12 @@ pipeline {
                     . .venv/bin/activate
                     python -m pytest tests/test_integration.py -v
                 '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
             }
         }
     }
