@@ -54,5 +54,11 @@ pipeline {
                 sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
             }
         }
+
+        stage('Deploy') {
+            steps {
+                sh 'docker compose up -d api prometheus grafana'
+            }
+        }
     }
 }
