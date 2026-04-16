@@ -2,7 +2,9 @@ services:
 
   # ─── JENKINS ───────────────────────────────────────────────────────────────
   jenkins:
-    image: jenkins/jenkins:lts
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
     container_name: sentiment-jenkins
     ports:
       - "8080:8080"
@@ -10,10 +12,8 @@ services:
     volumes:
       - jenkins-data:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
-    # Forza l'utente jenkins a girare con il gruppo docker dell'host
-    # in modo che abbia i permessi sul socket
     group_add:
-      - "0"  # root group — garantisce accesso al socket su Mac/Linux
+      - "0"
     restart: unless-stopped
     networks:
       - sentiment-net
