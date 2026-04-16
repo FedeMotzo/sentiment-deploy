@@ -1,5 +1,20 @@
 services:
 
+  # ─── JENKINS ───────────────────────────────────────────────────────────────
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: sentiment-jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins-data:/var/jenkins_home
+      # Montiamo il socket Docker per permettere a Jenkins di buildare immagini
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - sentiment-net
+
   # ─── API ───────────────────────────────────────────────────────────────────
   api:
     build: .
@@ -7,7 +22,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Montiamo il modello come volume
       - ./app/model.pkl:/app/app/model.pkl:ro
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -32,10 +46,10 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=15d" 
+      - "--storage.tsdb.retention.time=15d"
     depends_on:
       api:
-        condition: service_healthy  # aspetta che l'API sia healthy
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - sentiment-net
@@ -60,14 +74,13 @@ services:
     networks:
       - sentiment-net
 
-# ─── VOLUMI PERSISTENTI ────────────────────────────────────────────────────
-# I dati di Prometheus e Grafana sopravvivono al riavvio dei container
+# ─── VOLUMI PERSISTENTI ──────────────────────────────────────────────────────
 volumes:
   prometheus-data:
   grafana-data:
+  jenkins-data:
 
-# ─── RETE INTERNA ──────────────────────────────────────────────────────────
-# I tre servizi comunicano su una rete Docker isolata
+# ─── RETE INTERNA ────────────────────────────────────────────────────────────
 networks:
   sentiment-net:
     driver: bridge
