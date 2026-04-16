@@ -1,0 +1,35 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.venv
+venv
+.coverage
+.mypy_cache
+
+.vscode
+.idea
+*.swp
+
+Jenkinsfile
+.github
+jenkins/
+
+README.md
+docs/
+
+docker-compose.yml
+.env
+
+tests/
+
+scripts/
+data/
+
+monitoring/
