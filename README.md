@@ -109,3 +109,125 @@ python train.py
 ```
 
 ---
+
+# Step 2 — API REST con FastAPI
+
+## Obiettivo
+
+Esporre il modello di Sentiment Analysis tramite una API REST, rendendolo accessibile via HTTP. L'API gestisce la validazione dell'input, l'inferenza del modello e l'esposizione delle metriche per Prometheus.
+
+---
+
+## Struttura
+
+```
+app/
+├── __init__.py
+├── model.py    ← caricamento e inferenza del modello
+├── metrics.py  ← definizione metriche Prometheus
+└── main.py     ← FastAPI ed endpoint
+```
+
+---
+
+## Componenti
+
+### `model.py` — Inferenza
+
+Gestisce il caricamento del pipeline sklearn e l'inferenza. Il modello viene caricato **una volta sola** all'avvio dell'API in una variabile globale `_pipeline`, evitando di rileggere il file `.pkl` ad ogni richiesta.
+
+La funzione `predict()` restituisce sempre tre informazioni:
+- `sentiment`: la classe predetta (`positive`, `negative`, `neutral`)
+- `confidence`: la probabilità della classe predetta
+- `probabilities`: le probabilità di tutte e tre le classi
+
+### `metrics.py` — Metriche Prometheus
+
+Definisce tre tipi di metriche:
+
+| Metrica | Tipo | Descrizione |
+|---------|------|-------------|
+| `sentiment_predictions_total` | Counter | Numero totale di predizioni, per classe |
+| `sentiment_prediction_errors_total` | Counter | Numero totale di errori |
+| `sentiment_prediction_latency_seconds` | Histogram | Distribuzione dei tempi di risposta |
+| `sentiment_cpu_usage_percent` | Gauge | Utilizzo CPU corrente |
+
+**Differenza tra i tipi:**
+- **Counter**: valore che cresce (es. numero di richieste totali)
+- **Histogram**: registra la distribuzione di un valore nel tempo (es. quante richieste hanno risposto entro 10ms, 50ms, 100ms...)
+- **Gauge**: valore istantaneo che può salire e scendere (es. CPU%)
+
+### `main.py` — Applicazione FastAPI
+
+Definisce l'applicazione e i tre endpoint. Usa il **lifespan** di FastAPI per caricare il modello allo start.
+
+---
+
+## Endpoint
+
+### `POST /predict`
+
+Classifica il sentiment di una recensione.
+
+**Request:**
+```json
+{
+  "review": "This product is absolutely amazing!"
+}
+```
+
+**Response:**
+```json
+{
+  "sentiment": "positive",
+  "confidence": 0.8767,
+  "probabilities": {
+    "negative": 0.0820,
+    "neutral":  0.0412,
+    "positive": 0.8767
+  }
+}
+```
+
+**Validazione input** — gestita da Pydantic:
+- Il campo `review` non può essere vuoto
+- La recensione deve contenere almeno 3 caratteri
+- In caso di input non valido, l'API restituisce `422 Unprocessable Entity`
+
+**Aggiornamento metriche** — ad ogni chiamata:
+- Incrementa `sentiment_predictions_total` con la label del sentiment predetto
+- Registra la latenza in `sentiment_prediction_latency_seconds`
+- In caso di errore, incrementa `sentiment_prediction_errors_total`
+
+---
+
+### `GET /metrics`
+
+Espone tutte le metriche in formato testo leggibile da Prometheus.
+
+```
+# HELP sentiment_predictions_total Numero totale di predizioni eseguite
+# TYPE sentiment_predictions_total counter
+sentiment_predictions_total{sentiment="positive"} 42.0
+sentiment_predictions_total{sentiment="negative"} 18.0
+sentiment_predictions_total{sentiment="neutral"} 7.0
+...
+```
+
+Prometheus chiama questo endpoint periodicamente e archivia i dati nel suo database.
+
+---
+
+### `GET /health`
+
+Healthcheck per Docker e Jenkins. Restituisce `200 OK` se l'API è attiva.
+
+```json
+{ "status": "ok" }
+```
+
+Usato da:
+- Docker per verificare che il container sia sano (`HEALTHCHECK`)
+- Jenkins per verificare che il deploy sia andato a buon fine
+
+---
