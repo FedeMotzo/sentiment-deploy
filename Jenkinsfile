@@ -4,31 +4,32 @@ pipeline {
     environment {
         IMAGE_NAME = "sentiment-api"
         IMAGE_TAG  = "${BUILD_NUMBER}"
-        PATH = "/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:${env.PATH}"
     }
 
     stages {
 
-        // ── 1. CHECKOUT ──────────────────────────────────────────────────────
-        stage('Checkout') {
+        // ── 1. INITIALIZE ────────────────────────────────────────────────────
+        // Configura il PATH con il Docker installato tramite Global Tool Configuration
+        stage('Initialize') {
             steps {
-                echo "Checkout del repository..."
-                checkout scm
+                script {
+                    def dockerHome = tool 'myDocker'
+                    env.PATH = "${dockerHome}/bin:${env.PATH}"
+                }
+                echo "Docker path configurato: ${env.PATH}"
             }
         }
 
         // ── 2. TEST ──────────────────────────────────────────────────────────
-        // Eseguiti dentro un container Python con reuseNode true:
-        // il container condivide il workspace dell'agent Jenkins
         stage('Unit Test') {
             agent {
                 docker {
                     image 'python:3.12-slim'
-                    reuseNode true  // condivide workspace e node con l'agent principale
+                    reuseNode true
                 }
             }
             steps {
-                echo "Installazione dipendenze ed esecuzione unit test..."
+                echo "Esecuzione unit test..."
                 sh '''
                     pip install -r requirements.txt --quiet
                     python -m pytest tests/test_unit.py -v
