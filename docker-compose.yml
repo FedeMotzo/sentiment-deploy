@@ -9,8 +9,11 @@ services:
       - "50000:50000"
     volumes:
       - jenkins-data:/var/jenkins_home
-      # Montiamo il socket Docker per permettere a Jenkins di buildare immagini
       - /var/run/docker.sock:/var/run/docker.sock
+    # Forza l'utente jenkins a girare con il gruppo docker dell'host
+    # in modo che abbia i permessi sul socket
+    group_add:
+      - "0"  # root group — garantisce accesso al socket su Mac/Linux
     restart: unless-stopped
     networks:
       - sentiment-net
