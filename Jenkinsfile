@@ -9,51 +9,52 @@ pipeline {
     stages {
 
         // ── 1. INITIALIZE ────────────────────────────────────────────────────
-        // Configura il PATH con il Docker installato tramite Global Tool Configuration
         stage('Initialize') {
             steps {
                 script {
                     def dockerHome = tool 'myDocker'
                     env.PATH = "${dockerHome}/bin:${env.PATH}"
                 }
-                echo "Docker path configurato: ${env.PATH}"
             }
         }
 
-        // ── 2. TEST ──────────────────────────────────────────────────────────
-        stage('Unit Test') {
-            agent {
-                docker {
-                    image 'python:3.12-slim'
-                    reuseNode true
-                }
+        // ── 2. SETUP ─────────────────────────────────────────────────────────
+        // Installa le dipendenze Python nel workspace Jenkins
+        stage('Setup') {
+            steps {
+                echo "Setup ambiente Python..."
+                sh '''
+                    python3 -m venv .venv
+                    . .venv/bin/activate
+                    pip install --upgrade pip --quiet
+                    pip install -r requirements.txt --quiet
+                '''
             }
+        }
+
+        // ── 3. UNIT TEST ─────────────────────────────────────────────────────
+        stage('Unit Test') {
             steps {
                 echo "Esecuzione unit test..."
                 sh '''
-                    pip install -r requirements.txt --quiet
+                    . .venv/bin/activate
                     python -m pytest tests/test_unit.py -v
                 '''
             }
         }
 
+        // ── 4. INTEGRATION TEST ──────────────────────────────────────────────
         stage('Integration Test') {
-            agent {
-                docker {
-                    image 'python:3.12-slim'
-                    reuseNode true
-                }
-            }
             steps {
                 echo "Esecuzione integration test..."
                 sh '''
-                    pip install -r requirements.txt --quiet
+                    . .venv/bin/activate
                     python -m pytest tests/test_integration.py -v
                 '''
             }
         }
 
-        // ── 3. BUILD DOCKER IMAGE ────────────────────────────────────────────
+        // ── 5. BUILD DOCKER IMAGE ────────────────────────────────────────────
         stage('Build Docker Image') {
             steps {
                 echo "Build dell'immagine Docker..."
@@ -61,7 +62,7 @@ pipeline {
             }
         }
 
-        // ── 4. DEPLOY ────────────────────────────────────────────────────────
+        // ── 6. DEPLOY ────────────────────────────────────────────────────────
         stage('Deploy') {
             steps {
                 echo "Deploy dello stack..."
@@ -72,7 +73,7 @@ pipeline {
             }
         }
 
-        // ── 5. HEALTH CHECK ──────────────────────────────────────────────────
+        // ── 7. HEALTH CHECK ──────────────────────────────────────────────────
         stage('Health Check') {
             steps {
                 echo "Verifica che l'API sia up..."
@@ -91,6 +92,9 @@ pipeline {
         }
         failure {
             echo "❌ Pipeline fallita al stage: ${env.STAGE_NAME}"
+        }
+        always {
+            sh "rm -rf .venv || true"
         }
     }
 }
