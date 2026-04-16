@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent none  // nessun agent globale — ogni stage dichiara il suo
 
     environment {
         IMAGE_NAME = "sentiment-api"
@@ -8,53 +8,53 @@ pipeline {
 
     stages {
 
-        // ── 1. SETUP AMBIENTE ────────────────────────────────────────────────
-        stage('Setup') {
-            steps {
-                echo "Creazione venv e installazione dipendenze..."
-                sh '''
-                    python3 -m venv .venv
-                    . .venv/bin/activate
-                    pip install --upgrade pip --quiet
-                    pip install -r requirements.txt --quiet
-                '''
-            }
-        }
-
-        // ── 2. UNIT TEST ─────────────────────────────────────────────────────
+        // ── 1. TEST ──────────────────────────────────────────────────────────
+        // Eseguiti dentro un container Python
         stage('Unit Test') {
+            agent {
+                docker {
+                    image 'python:3.12-slim'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
-                echo "Esecuzione unit test..."
+                echo "Installazione dipendenze ed esecuzione unit test..."
                 sh '''
-                    . .venv/bin/activate
+                    pip install -r requirements.txt --quiet
                     python -m pytest tests/test_unit.py -v
                 '''
             }
         }
 
-        // ── 3. INTEGRATION TEST ──────────────────────────────────────────────
         stage('Integration Test') {
+            agent {
+                docker {
+                    image 'python:3.12-slim'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 echo "Esecuzione integration test..."
                 sh '''
-                    . .venv/bin/activate
+                    pip install -r requirements.txt --quiet
                     python -m pytest tests/test_integration.py -v
                 '''
             }
         }
 
-        // ── 4. BUILD DOCKER IMAGE ────────────────────────────────────────────
+        // ── 2. BUILD E DEPLOY ─────────────────────────────────────────────────
         stage('Build Docker Image') {
+            agent any
             steps {
                 echo "Build dell'immagine Docker..."
                 sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
             }
         }
 
-        // ── 5. DEPLOY ────────────────────────────────────────────────────────
         stage('Deploy') {
+            agent any
             steps {
-                echo "Deploy dello stack..."
+                echo "Deploy stack..."
                 sh '''
                     docker compose down --remove-orphans || true
                     docker compose up -d --build
@@ -62,8 +62,8 @@ pipeline {
             }
         }
 
-        // ── 6. HEALTH CHECK ──────────────────────────────────────────────────
         stage('Health Check') {
+            agent any
             steps {
                 echo "Verifica che l'API sia up..."
                 sh '''
@@ -75,22 +75,12 @@ pipeline {
         }
     }
 
-    // ── NOTIFICHE ────────────────────────────────────────────────────────────
     post {
         success {
-            echo """
-            Pipeline completata con successo!
-            Immagine: ${IMAGE_NAME}:${IMAGE_TAG}
-            API:       http://localhost:8000
-            Grafana:   http://localhost:3000
-            """
+            echo "✅ Pipeline completata con successo! Immagine: ${IMAGE_NAME}:${IMAGE_TAG}"
         }
         failure {
             echo "❌ Pipeline fallita al stage: ${env.STAGE_NAME}"
-        }
-        always {
-            echo "Cleanup workspace..."
-            sh "rm -rf .venv || true"
         }
     }
 }
